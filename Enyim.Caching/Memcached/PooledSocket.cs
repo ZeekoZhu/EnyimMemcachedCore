@@ -64,24 +64,26 @@ namespace Enyim.Caching.Memcached
                     .FirstOrDefault(ip => ip.AddressFamily == AddressFamily.InterNetwork);
                 if (address == null)
                     throw new ArgumentException(String.Format("Could not resolve host '{0}'.", endpoint.Host));
-                args.RemoteEndPoint = new IPEndPoint(address, endpoint.Port);
-            }
-            else
-            {
-                //DnsEndPoint is not working on linux
-                args.RemoteEndPoint = new IPEndPoint(address, endpoint.Port);
             }
 
-            using (var mres = new ManualResetEventSlim())
+            //Learn from https://github.com/dotnet/corefx/blob/release/2.2/src/System.Data.SqlClient/src/System/Data/SqlClient/SNI/SNITcpHandle.cs#L180
+            var cts = new CancellationTokenSource();
+            cts.CancelAfter(timeout);
+            void Cancel()
             {
-                args.Completed += (s, e) => mres.Set();
-                if (socket.ConnectAsync(args))
+                if (!socket.Connected)
                 {
-                    if (!mres.Wait(timeout))
-                    {
-                        throw new TimeoutException("Could not connect to " + endpoint);
-                    }
+                    socket.Dispose();
+                    throw new TimeoutException($"Could not connect to {address}:{endpoint.Port}. Timeout({timeout}ms)!");
                 }
+            }
+            cts.Token.Register(Cancel);
+
+            socket.Connect(address, endpoint.Port);
+            if (!socket.Connected)
+            {
+                socket.Dispose();
+                throw new TimeoutException($"Could not connect to {address}:{endpoint.Port}. socket.Connected is false.");
             }
         }
 
